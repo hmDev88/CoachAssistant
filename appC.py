@@ -20,7 +20,6 @@ from sklearn.impute import SimpleImputer
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.cluster import KMeans
-from sklearn.ensemble import HistGradientBoostingClassifier
 
 from sklearn.metrics import (
     mean_squared_error,
@@ -68,11 +67,9 @@ REQUIRED_COLUMNS = [
     "Fatigue_Level",
 ]
 
-
 def get_data_path() -> Path:
     p = os.environ.get("ASSISTANT_COACH_DATA_PATH", CFG.default_data_path)
     return Path(p)
-
 
 def load_dataset(path: Path) -> pd.DataFrame:
     if not path.exists():
@@ -104,7 +101,6 @@ def load_dataset(path: Path) -> pd.DataFrame:
 
     return df
 
-
 # ============================================================
 # FEATURE SETS (matching your report)
 # ============================================================
@@ -115,7 +111,6 @@ CLF_FEATURES = ["Goals", "Assists", "Pass_Accuracy_%", "Minutes_Played", "Fouls"
 CLF_TARGET = "Fatigue_Level"
 
 KM_FEATURES = ["Goals", "Assists", "Pass_Accuracy_%", "Shots_on_Target"]
-
 
 # ============================================================
 # MODEL BUILDING
@@ -142,7 +137,6 @@ def make_regression_pipeline() -> Pipeline:
 
     return Pipeline([("preprocess", pre), ("model", model)])
 
-
 def make_classification_pipeline() -> Pipeline:
     pre = ColumnTransformer(
         transformers=[
@@ -151,15 +145,12 @@ def make_classification_pipeline() -> Pipeline:
         remainder="drop",
     )
 
-    model = HistGradientBoostingClassifier(
-    random_state=CFG.random_state,
-    max_depth=6,
-    learning_rate=0.08,
-    max_iter=400,
-)
+    model = DecisionTreeClassifier(
+        random_state=CFG.random_state,
+        max_depth=6,
+    )
 
     return Pipeline([("preprocess", pre), ("model", model)])
-
 
 def make_kmeans_pipeline(n_clusters: int = 3) -> Pipeline:
     pre = ColumnTransformer(
@@ -175,7 +166,6 @@ def make_kmeans_pipeline(n_clusters: int = 3) -> Pipeline:
     km = KMeans(n_clusters=n_clusters, random_state=CFG.random_state, n_init=20)
     return Pipeline([("preprocess", pre), ("model", km)])
 
-
 # ============================================================
 # TRAIN & PERSIST
 # ============================================================
@@ -183,7 +173,6 @@ def ensure_models_dir() -> Path:
     d = Path(CFG.models_dir)
     d.mkdir(parents=True, exist_ok=True)
     return d
-
 
 def model_paths() -> dict[str, Path]:
     d = ensure_models_dir()
@@ -193,7 +182,6 @@ def model_paths() -> dict[str, Path]:
         "km": d / CFG.km_model_file,
         "meta": d / CFG.meta_file,
     }
-
 
 def train_all(df: pd.DataFrame) -> dict:
     # Regression (Goals)
@@ -262,7 +250,6 @@ def train_all(df: pd.DataFrame) -> dict:
 
     return meta
 
-
 def load_models() -> tuple[Pipeline, Pipeline, Pipeline, dict]:
     paths = model_paths()
     if not (paths["reg"].exists() and paths["clf"].exists() and paths["km"].exists() and paths["meta"].exists()):
@@ -273,7 +260,6 @@ def load_models() -> tuple[Pipeline, Pipeline, Pipeline, dict]:
         joblib.load(paths["km"]),
         joblib.load(paths["meta"]),
     )
-
 
 # ============================================================
 # STREAMLIT UI
@@ -287,8 +273,7 @@ st.caption("Goals prediction (regression), Readiness prediction (fatigue classif
 with st.sidebar:
     st.header("Dataset & Models")
     st.write("Upload a dataset (xlsx/csv) or use `ASSISTANT_COACH_DATA_PATH`.")
-    uploaded = st.file_uploader("Upload dataset", type=["xlsx", "xls", "csv"])
-
+    uploaded = st.file_uploader("Upload dataset", type=["xlsx", "xls", "csv"])\n
     data_path = get_data_path()
     if uploaded is not None:
         save_dir = Path(CFG.data_dir)
