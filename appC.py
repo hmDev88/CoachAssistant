@@ -36,7 +36,7 @@ from sklearn.metrics import (
 @dataclass(frozen=True)
 class Config:
     # Set ASSISTANT_COACH_DATA_PATH to override.
-    default_data_path: str = "assistant_coach_dataset.xlsx"
+    default_data_path: str = "SmartCoach_merged.xlsx"
     models_dir: str = "models"
     data_dir: str = "data"
     random_state: int = 42
