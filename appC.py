@@ -1,21 +1,15 @@
-# app.py
+# appC.py
 from __future__ import annotations
 
 import os
-import re
-import sqlite3
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import joblib
 import streamlit as st
-
 import matplotlib.pyplot as plt
-
-from passlib.context import CryptContext
 
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
@@ -41,10 +35,10 @@ from sklearn.metrics import (
 # ============================================================
 @dataclass(frozen=True)
 class Config:
-    default_data_path: str = "SmartCoach_merged.xlsx"  # set env ASSISTANT_COACH_DATA_PATH to override
+    # Set ASSISTANT_COACH_DATA_PATH to override.
+    default_data_path: str = "assistant_coach_dataset.xlsx"
     models_dir: str = "models"
     data_dir: str = "data"
-    auth_db_path: str = "auth/users.db"
     random_state: int = 42
     test_size: float = 0.2
 
@@ -55,164 +49,6 @@ class Config:
 
 
 CFG = Config()
-
-# Password hashing (bcrypt)
-pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
-
-
-# ============================================================
-# AUTH (SQLite + bcrypt)
-# ============================================================
-def ensure_auth_db() -> None:
-    db_path = Path(CFG.auth_db_path)
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                email TEXT,
-                password_hash TEXT NOT NULL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            );
-            """
-        )
-        conn.commit()
-
-
-def is_valid_username(username: str) -> bool:
-    return bool(re.fullmatch(r"[A-Za-z0-9_]{3,20}", username.strip()))
-
-
-def is_strong_password(password: str) -> Tuple[bool, str]:
-    if len(password) < 8:
-        return False, "Password must be at least 8 characters."
-    if not re.search(r"[A-Z]", password):
-        return False, "Password must include an uppercase letter."
-    if not re.search(r"[a-z]", password):
-        return False, "Password must include a lowercase letter."
-    if not re.search(r"[0-9]", password):
-        return False, "Password must include a number."
-    return True, ""
-
-
-def create_user(username: str, email: str, password: str) -> Tuple[bool, str]:
-    ensure_auth_db()
-
-    username = username.strip()
-    email = email.strip()
-
-    if not is_valid_username(username):
-        return False, "Username must be 3–20 characters (letters, numbers, underscore)."
-
-    ok, msg = is_strong_password(password)
-    if not ok:
-        return False, msg
-
-    password_hash = pwd_context.hash(password)
-
-    try:
-        with sqlite3.connect(CFG.auth_db_path) as conn:
-            conn.execute(
-                "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
-                (username, email if email else None, password_hash),
-            )
-            conn.commit()
-        return True, "Account created successfully. You can now sign in."
-    except sqlite3.IntegrityError:
-        return False, "That username already exists. Please choose another."
-    except Exception as e:
-        return False, f"Failed to create account: {e}"
-
-
-def verify_user(username: str, password: str) -> Tuple[bool, str]:
-    ensure_auth_db()
-    username = username.strip()
-
-    with sqlite3.connect(CFG.auth_db_path) as conn:
-        row = conn.execute(
-            "SELECT password_hash FROM users WHERE username = ?",
-            (username,),
-        ).fetchone()
-
-    if row is None:
-        return False, "Invalid username or password."
-
-    stored_hash = row[0]
-    if not pwd_context.verify(password, stored_hash):
-        return False, "Invalid username or password."
-
-    return True, "Signed in successfully."
-
-
-def any_users_exist() -> bool:
-    ensure_auth_db()
-    with sqlite3.connect(CFG.auth_db_path) as conn:
-        row = conn.execute("SELECT COUNT(*) FROM users").fetchone()
-    return bool(row and row[0] > 0)
-
-
-def require_auth() -> Optional[str]:
-    """
-    Returns the authenticated username or None.
-    Shows auth UI if not logged in.
-    """
-    if "auth" not in st.session_state:
-        st.session_state.auth = {"logged_in": False, "username": None}
-
-    if st.session_state.auth.get("logged_in"):
-        return st.session_state.auth.get("username")
-
-    st.title("⚽ Assistant Coach")
-    st.info("Please sign in to use the app.")
-
-    tab_signin, tab_signup = st.tabs(["Sign in", "Sign up"])
-
-    with tab_signin:
-        u = st.text_input("Username", key="signin_user")
-        p = st.text_input("Password", type="password", key="signin_pass")
-        if st.button("Sign in", type="primary", use_container_width=True):
-            ok, msg = verify_user(u, p)
-            if ok:
-                st.session_state.auth = {"logged_in": True, "username": u.strip()}
-                st.success(msg)
-                st.rerun()
-            else:
-                st.error(msg)
-
-    with tab_signup:
-        if any_users_exist():
-            st.caption("Create a new account (coach / staff).")
-        else:
-            st.warning(
-                "No users exist yet. Create the first account now (this will become the first login)."
-            )
-
-        u2 = st.text_input("Username (3–20 chars, letters/numbers/_)", key="signup_user")
-        e2 = st.text_input("Email (optional)", key="signup_email")
-        p2 = st.text_input("Password", type="password", key="signup_pass")
-        p3 = st.text_input("Confirm password", type="password", key="signup_pass2")
-
-        if st.button("Create account", use_container_width=True):
-            if p2 != p3:
-                st.error("Passwords do not match.")
-            else:
-                ok, msg = create_user(u2, e2, p2)
-                if ok:
-                    st.success(msg)
-                else:
-                    st.error(msg)
-
-    return None
-
-
-def logout_button():
-    if st.sidebar.button("🚪 Logout", use_container_width=True):
-        st.session_state.auth = {"logged_in": False, "username": None}
-        st.rerun()
-
 
 # ============================================================
 # DATA LOADING & VALIDATION
@@ -248,7 +84,7 @@ def load_dataset(path: Path) -> pd.DataFrame:
     elif path.suffix.lower() == ".csv":
         df = pd.read_csv(path)
     else:
-        raise ValueError("Unsupported file type. Use .xlsx or .csv")
+        raise ValueError("Unsupported file type. Use .xlsx/.xls or .csv")
 
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing:
@@ -257,7 +93,6 @@ def load_dataset(path: Path) -> pd.DataFrame:
     df = df.copy()
     df["Match_Date"] = pd.to_datetime(df["Match_Date"], errors="coerce")
 
-    # Coerce numeric columns
     numeric_cols = ["Goals", "Assists", "Pass_Accuracy_%", "Minutes_Played", "Fouls", "Shots_on_Target"]
     for c in numeric_cols:
         df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -270,7 +105,7 @@ def load_dataset(path: Path) -> pd.DataFrame:
 
 
 # ============================================================
-# FEATURE SETS (AS PER YOUR REPORT)
+# FEATURE SETS (matching your report)
 # ============================================================
 REG_FEATURES = ["Minutes_Played", "Shots_on_Target", "Pass_Accuracy_%", "Fatigue_Level", "Assists"]
 REG_TARGET = "Goals"
@@ -293,7 +128,8 @@ def make_regression_pipeline() -> Pipeline:
             ("num", Pipeline([("imputer", SimpleImputer(strategy="median"))]), numeric),
             ("cat", Pipeline([("imputer", SimpleImputer(strategy="most_frequent")),
                               ("onehot", OneHotEncoder(handle_unknown="ignore"))]), categorical),
-        ]
+        ],
+        remainder="drop",
     )
 
     model = RandomForestRegressor(
@@ -358,13 +194,14 @@ def model_paths() -> dict[str, Path]:
 
 
 def train_all(df: pd.DataFrame) -> dict:
-    # Regression
+    # Regression (Goals)
     X_reg = df[REG_FEATURES].copy()
     y_reg = df[REG_TARGET].copy()
 
     Xr_train, Xr_test, yr_train, yr_test = train_test_split(
         X_reg, y_reg, test_size=CFG.test_size, random_state=CFG.random_state
     )
+
     reg_pipe = make_regression_pipeline()
     reg_pipe.fit(Xr_train, yr_train)
 
@@ -373,7 +210,7 @@ def train_all(df: pd.DataFrame) -> dict:
     mae = float(mean_absolute_error(yr_test, pred_reg))
     r2 = float(r2_score(yr_test, pred_reg))
 
-    # Classification
+    # Classification (Fatigue_Level)
     X_clf = df[CLF_FEATURES].copy()
     y_clf = df[CLF_TARGET].copy()
 
@@ -390,6 +227,7 @@ def train_all(df: pd.DataFrame) -> dict:
         random_state=CFG.random_state,
         stratify=y_clf,
     )
+
     clf_pipe = make_classification_pipeline()
     clf_pipe.fit(Xc_train, yc_train)
 
@@ -401,8 +239,8 @@ def train_all(df: pd.DataFrame) -> dict:
     # KMeans
     km_pipe = make_kmeans_pipeline(n_clusters=3)
     km_pipe.fit(df[KM_FEATURES].copy())
-    clusters = km_pipe.predict(df[KM_FEATURES].copy())
 
+    clusters = km_pipe.predict(df[KM_FEATURES].copy())
     X_scaled = km_pipe.named_steps["preprocess"].transform(df[KM_FEATURES].copy())
     sil = float(silhouette_score(X_scaled, clusters)) if len(set(clusters)) > 1 else float("nan")
 
@@ -436,27 +274,17 @@ def load_models() -> tuple[Pipeline, Pipeline, Pipeline, dict]:
 
 
 # ============================================================
-# STREAMLIT APP
+# STREAMLIT UI
 # ============================================================
 st.set_page_config(page_title="Assistant Coach", page_icon="⚽", layout="wide")
 
-# Auth gate
-user = require_auth()
-if user is None:
-    st.stop()
-
-with st.sidebar:
-    st.success(f"Signed in as **{user}**")
-    logout_button()
-
 st.title("⚽ Assistant Coach")
-st.caption("Goals prediction (regression), Readiness prediction (fatigue classification), and player clustering — with analytics plots.")
+st.caption("Goals prediction (regression), Readiness prediction (fatigue classification), player clustering, and analytics plots.")
 
-# Sidebar dataset & training controls
+# Sidebar: dataset + training
 with st.sidebar:
     st.header("Dataset & Models")
     st.write("Upload a dataset (xlsx/csv) or use `ASSISTANT_COACH_DATA_PATH`.")
-
     uploaded = st.file_uploader("Upload dataset", type=["xlsx", "xls", "csv"])
 
     data_path = get_data_path()
@@ -471,7 +299,7 @@ with st.sidebar:
     retrain = st.button("🔁 Retrain models", use_container_width=True)
     st.caption("Retrain after updating the dataset.")
 
-# Load data
+# Load dataset
 try:
     df = load_dataset(data_path)
 except Exception as e:
@@ -507,9 +335,9 @@ tabs = st.tabs([
     "🛠️ Model Metrics",
 ])
 
-# -----------------------------
+# ------------------------------------------------------------
 # Home
-# -----------------------------
+# ------------------------------------------------------------
 with tabs[0]:
     c1, c2, c3 = st.columns(3)
     c1.metric("Rows", meta.get("rows", len(df)))
@@ -519,10 +347,9 @@ with tabs[0]:
     st.subheader("Quick look")
     st.dataframe(df.head(25), use_container_width=True)
 
-
-# -----------------------------
-# Predict Goals (Regression)
-# -----------------------------
+# ------------------------------------------------------------
+# Predict Goals
+# ------------------------------------------------------------
 with tabs[1]:
     st.subheader("🎯 Predict Goals (Regression)")
     st.caption("Inputs: Minutes_Played, Shots_on_Target, Pass_Accuracy_%, Fatigue_Level, Assists")
@@ -530,12 +357,12 @@ with tabs[1]:
     colA, colB = st.columns([1, 1])
 
     with colA:
-        minutes = st.number_input("Minutes Played", min_value=0, max_value=130, value=75)
-        shots = st.number_input("Shots on Target", min_value=0, max_value=20, value=2)
-        pass_acc = st.number_input("Pass Accuracy (%)", min_value=0.0, max_value=100.0, value=82.0, step=0.1)
-        assists = st.number_input("Assists", min_value=0, max_value=10, value=0)
-        fatigue = st.selectbox("Fatigue Level", options=["Low", "Medium", "High"], index=1)
-        predict_goals = st.button("Predict Goals", type="primary", use_container_width=True)
+        minutes = st.number_input("Minutes Played", min_value=0, max_value=130, value=75, key="reg_minutes")
+        shots = st.number_input("Shots on Target", min_value=0, max_value=20, value=2, key="reg_shots")
+        pass_acc = st.number_input("Pass Accuracy (%)", min_value=0.0, max_value=100.0, value=82.0, step=0.1, key="reg_passacc")
+        assists = st.number_input("Assists", min_value=0, max_value=10, value=0, key="reg_assists")
+        fatigue = st.selectbox("Fatigue Level", options=["Low", "Medium", "High"], index=1, key="reg_fatigue")
+        predict_goals = st.button("Predict Goals", type="primary", use_container_width=True, key="btn_pred_goals")
 
     with colB:
         if predict_goals:
@@ -548,12 +375,12 @@ with tabs[1]:
             }])
             yhat = float(reg_model.predict(X)[0])
             st.success(f"Predicted Goals: **{yhat:.2f}**")
-        st.info("Tip: Retrain if you change the dataset or add more samples.")
 
+        st.info("Tip: retrain after updating the dataset for better accuracy.")
 
-# -----------------------------
-# Predict Readiness (Classification)
-# -----------------------------
+# ------------------------------------------------------------
+# Predict Readiness (Fatigue)
+# ------------------------------------------------------------
 with tabs[2]:
     st.subheader("🧠 Predict Player Readiness (Fatigue_Level)")
     st.caption("Inputs: Goals, Assists, Pass_Accuracy_%, Minutes_Played, Fouls, Shots_on_Target")
@@ -561,13 +388,13 @@ with tabs[2]:
     colA, colB = st.columns([1, 1])
 
     with colA:
-        g = st.number_input("Goals", min_value=0, max_value=10, value=1)
-        a = st.number_input("Assists", min_value=0, max_value=10, value=0)
-        p = st.number_input("Pass Accuracy (%)", min_value=0.0, max_value=100.0, value=85.0, step=0.1)
-        m = st.number_input("Minutes Played", min_value=0, max_value=130, value=75)
-        f = st.number_input("Fouls", min_value=0, max_value=10, value=1)
-        s = st.number_input("Shots on Target", min_value=0, max_value=20, value=2)
-        predict_fatigue = st.button("Predict Fatigue Level", type="primary", use_container_width=True)
+        g = st.number_input("Goals", min_value=0, max_value=10, value=1, key="clf_goals")
+        a = st.number_input("Assists", min_value=0, max_value=10, value=0, key="clf_assists")
+        p = st.number_input("Pass Accuracy (%)", min_value=0.0, max_value=100.0, value=85.0, step=0.1, key="clf_passacc")
+        m = st.number_input("Minutes Played", min_value=0, max_value=130, value=75, key="clf_minutes")
+        f = st.number_input("Fouls", min_value=0, max_value=10, value=1, key="clf_fouls")
+        s = st.number_input("Shots on Target", min_value=0, max_value=20, value=2, key="clf_shots")
+        predict_fatigue = st.button("Predict Fatigue Level", type="primary", use_container_width=True, key="btn_pred_fatigue")
 
     with colB:
         if predict_fatigue:
@@ -583,6 +410,7 @@ with tabs[2]:
             pred = clf_model.predict(X)[0]
             st.success(f"Predicted Fatigue_Level: **{pred}**")
 
+            # proba if available
             if hasattr(clf_model.named_steps["model"], "predict_proba"):
                 proba = clf_model.predict_proba(X)[0]
                 labels = list(clf_model.named_steps["model"].classes_)
@@ -596,18 +424,17 @@ with tabs[2]:
             else:
                 st.success("Recommendation: likely ready.")
 
-
-# -----------------------------
+# ------------------------------------------------------------
 # Clustering
-# -----------------------------
+# ------------------------------------------------------------
 with tabs[3]:
     st.subheader("🧩 Player Clusters (K-Means)")
     st.caption("Clusters based on: Goals, Assists, Pass_Accuracy_%, Shots_on_Target")
 
-    mode = st.radio("Mode", ["Select from dataset", "Manual input"], horizontal=True)
+    mode = st.radio("Mode", ["Select from dataset", "Manual input"], horizontal=True, key="km_mode")
 
     if mode == "Select from dataset":
-        player = st.selectbox("Player", options=sorted(df["Player"].astype(str).unique()))
+        player = st.selectbox("Player", options=sorted(df["Player"].astype(str).unique()), key="km_player_select")
         player_rows = df[df["Player"].astype(str) == str(player)].copy().sort_values("Match_Date", ascending=False)
         row = player_rows.iloc[0]
 
@@ -625,13 +452,13 @@ with tabs[3]:
     else:
         col1, col2 = st.columns(2)
         with col1:
-            g2 = st.number_input("Goals", min_value=0, max_value=10, value=1, key="km_g")
-            a2 = st.number_input("Assists", min_value=0, max_value=10, value=0, key="km_a")
+            g2 = st.number_input("Goals", min_value=0, max_value=10, value=1, key="km_goals")
+            a2 = st.number_input("Assists", min_value=0, max_value=10, value=0, key="km_assists")
         with col2:
-            p2 = st.number_input("Pass Accuracy (%)", min_value=0.0, max_value=100.0, value=85.0, step=0.1, key="km_p")
-            s2 = st.number_input("Shots on Target", min_value=0, max_value=20, value=2, key="km_s")
+            p2 = st.number_input("Pass Accuracy (%)", min_value=0.0, max_value=100.0, value=85.0, step=0.1, key="km_passacc")
+            s2 = st.number_input("Shots on Target", min_value=0, max_value=20, value=2, key="km_shots")
 
-        if st.button("Assign Cluster", type="primary"):
+        if st.button("Assign Cluster", type="primary", use_container_width=True, key="btn_km_assign"):
             X = pd.DataFrame([{
                 "Goals": g2,
                 "Assists": a2,
@@ -641,10 +468,9 @@ with tabs[3]:
             cluster = int(km_model.predict(X)[0])
             st.success(f"Cluster: **{cluster}**")
 
-
-# -----------------------------
-# Visual Analytics (PLOTS)
-# -----------------------------
+# ------------------------------------------------------------
+# Visual Analytics (plots)
+# ------------------------------------------------------------
 with tabs[4]:
     st.subheader("📈 Visual Analytics")
 
@@ -676,7 +502,7 @@ with tabs[4]:
     ax3.set_title("Fatigue Level Distribution")
     st.pyplot(fig3)
 
-    # 4) Cluster Visualization (2D projection)
+    # 4) Cluster Visualization (2D projection using first 2 scaled features)
     st.write("### Player Clusters (K-Means Projection)")
     X_scaled = km_model.named_steps["preprocess"].transform(df[KM_FEATURES].copy())
     clusters = km_model.named_steps["model"].labels_
@@ -688,22 +514,19 @@ with tabs[4]:
     ax4.set_ylabel("Feature 2 (scaled)")
     st.pyplot(fig4)
 
-    st.success("All report-style plots are included.")
-
-
-# -----------------------------
+# ------------------------------------------------------------
 # Data Explorer
-# -----------------------------
+# ------------------------------------------------------------
 with tabs[5]:
     st.subheader("📊 Data Explorer")
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        team = st.selectbox("Team", options=["All"] + sorted(df["Team"].astype(str).unique()))
+        team = st.selectbox("Team", options=["All"] + sorted(df["Team"].astype(str).unique()), key="filter_team")
     with c2:
-        opp = st.selectbox("Opponent", options=["All"] + sorted(df["Opponent"].astype(str).unique()))
+        opp = st.selectbox("Opponent", options=["All"] + sorted(df["Opponent"].astype(str).unique()), key="filter_opp")
     with c3:
-        fatigue = st.selectbox("Fatigue Level", options=["All", "Low", "Medium", "High"])
+        fatigue = st.selectbox("Fatigue Level", options=["All", "Low", "Medium", "High"], key="filter_fatigue")
 
     view = df.copy()
     if team != "All":
@@ -721,12 +544,12 @@ with tabs[5]:
         file_name="assistant_coach_filtered.csv",
         mime="text/csv",
         use_container_width=True,
+        key="download_filtered",
     )
 
-
-# -----------------------------
+# ------------------------------------------------------------
 # Model Metrics
-# -----------------------------
+# ------------------------------------------------------------
 with tabs[6]:
     st.subheader("🛠️ Model Metrics")
 
@@ -741,6 +564,7 @@ with tabs[6]:
     labels = meta["classification"]["labels"]
     cm = np.array(meta["classification"]["confusion_matrix"])
     cm_df = pd.DataFrame(cm, index=[f"Actual {l}" for l in labels], columns=[f"Pred {l}" for l in labels])
+
     st.write("Confusion Matrix (rows = actual, cols = predicted):")
     st.dataframe(cm_df, use_container_width=True)
 
