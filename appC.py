@@ -273,7 +273,7 @@ st.caption("Goals prediction (regression), Readiness prediction (fatigue classif
 with st.sidebar:
     st.header("Dataset & Models")
     st.write("Upload a dataset (xlsx/csv) or use `ASSISTANT_COACH_DATA_PATH`.")
-    uploaded = st.file_uploader("Upload dataset", type=["xlsx", "xls", "csv"])\n
+    uploaded = st.file_uploader("Upload dataset", type=["xlsx", "xls", "csv"])
     data_path = get_data_path()
     if uploaded is not None:
         save_dir = Path(CFG.data_dir)
