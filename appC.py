@@ -20,6 +20,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.cluster import KMeans
+from sklearn.ensemble import HistGradientBoostingClassifier
 
 from sklearn.metrics import (
     mean_squared_error,
@@ -150,11 +151,12 @@ def make_classification_pipeline() -> Pipeline:
         remainder="drop",
     )
 
-    model = DecisionTreeClassifier(
-        random_state=CFG.random_state,
-        max_depth=6,
-        min_samples_leaf=8,
-    )
+    model = HistGradientBoostingClassifier(
+    random_state=CFG.random_state,
+    max_depth=6,
+    learning_rate=0.08,
+    max_iter=400,
+)
 
     return Pipeline([("preprocess", pre), ("model", model)])
 
